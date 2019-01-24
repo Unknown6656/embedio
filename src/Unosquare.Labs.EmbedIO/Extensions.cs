@@ -425,7 +425,6 @@
             return idx < 10 && value.Substring(0, idx.Value).IsPredefinedScheme();
         }
 
-        internal static bool IsPredefinedScheme(this string value) => value != null &&
-                                                                      (value == "http" || value == "https" || value == "ws" || value == "wss");
+        internal static bool IsPredefinedScheme(this string value) => value == "http" || value == "https" || value == "ws" || value == "wss";
     }
 }
