@@ -28,6 +28,16 @@
             }
 
             [Test]
+            public async Task BigData_ReturnsOk()
+            {
+                var jsonString = await GetString($"{TestRegexController.RelativePath}big");
+
+                Assert.IsNotEmpty(jsonString);
+                Assert.IsTrue(jsonString.StartsWith("["));
+                Assert.IsTrue(jsonString.EndsWith("]"));
+            }
+
+            [Test]
             public async Task WithRegexId_ReturnsOk()
             {
                 await ValidatePerson($"{TestRegexController.RelativePath}regex/1");
@@ -72,12 +82,21 @@
                 await ValidatePerson(TestRegexController.RelativePath + "regextwo/" +
                                                 person.MainSkill + "/" + person.Age);
             }
+            
+            [Test]
+            public async Task WithRegexWithOptionalParams_ReturnsOk()
+            {
+                var person = PeopleRepository.Database.First();
+
+                await ValidatePerson(TestRegexController.RelativePath + "regexthree/" +
+                                     person.MainSkill);
+            }
         }
 
         public class Http405 : RegexWebApiModuleTest
         {
             [Test]
-            public async Task ValidPathInvalidMethod_Returns405()
+            public async Task ValidWebApiPathInvalidMethod_Returns405()
             {
                 var request = new TestHttpRequest(WebServerUrl + TestRegexController.RelativePath + "regex/1", HttpVerbs.Delete);
 

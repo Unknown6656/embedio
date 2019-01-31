@@ -18,14 +18,10 @@
     /// </summary>
     public static partial class Extensions
     {
-        #region Constants
-
         private static readonly byte[] LastByte = { 0x00 };
 
         private static readonly Regex RouteOptionalParamRegex = new Regex(@"\{[^\/]*\?\}",
             RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-        #endregion
 
         #region Session Management Methods
 
@@ -173,6 +169,7 @@
         /// The rest of the stream as a string, from the current position to the end.
         /// If the current position is at the end of the stream, returns an empty string.
         /// </returns>
+        [Obsolete("Please use the async method.")]
         public static string RequestBody(this IHttpContext context)
         {
             if (!context.Request.HasEntityBody)
@@ -183,6 +180,30 @@
                 using (var reader = new StreamReader(body, context.Request.ContentEncoding))
                 {
                     return reader.ReadToEnd();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Retrieves the request body as a string.
+        /// Note that once this method returns, the underlying input stream cannot be read again as 
+        /// it is not rewindable for obvious reasons. This functionality is by design.
+        /// </summary>
+        /// <param name="context">The context.</param>
+        /// <returns>
+        /// A task with the rest of the stream as a string, from the current position to the end.
+        /// If the current position is at the end of the stream, returns an empty string.
+        /// </returns>
+        public static async Task<string> RequestBodyAsync(this IHttpContext context)
+        {
+            if (!context.Request.HasEntityBody)
+                return null;
+
+            using (var body = context.Request.InputStream) // here we have data
+            {
+                using (var reader = new StreamReader(body, context.Request.ContentEncoding))
+                {
+                    return await reader.ReadToEndAsync().ConfigureAwait(false);
                 }
             }
         }
@@ -247,37 +268,44 @@
             if (validateFunc == null) validateFunc = () => false;
             if (requestPath == basePath && !validateFunc()) return new Dictionary<string, object>();
 
+            var i = 1; // match group index
             var match = RegexCache.MatchRegexStrategy(basePath, requestPath);
-
             var pathParts = basePath.Split('/');
 
-            if (!match.Success || validateFunc())
+            if (match.Success && !validateFunc())
             {
-                var optionalPath = RouteOptionalParamRegex.Replace(basePath, string.Empty);
-                var tempPath = requestPath;
-
-                if (optionalPath.Last() == '/' && requestPath.Last() != '/')
-                {
-                    tempPath += "/";
-                }
-
-                if (optionalPath == tempPath)
-                {
-                    return pathParts
-                        .Where(x => x.StartsWith("{"))
-                        .ToDictionary(CleanParamId, x => (object)null);
-                }
-            }
-            else
-            {
-                var i = 1; // match group index
-
                 return pathParts
                     .Where(x => x.StartsWith("{"))
                     .ToDictionary(CleanParamId, x => (object)match.Groups[i++].Value);
             }
 
-            return null;
+            var optionalPath = RouteOptionalParamRegex.Replace(basePath, string.Empty);
+            var tempPath = requestPath;
+
+            if (optionalPath.Last() == '/' && requestPath.Last() != '/')
+            {
+                tempPath += "/";
+            }
+
+            var subMatch = RegexCache.MatchRegexStrategy(optionalPath, tempPath);
+
+            if (!subMatch.Success || validateFunc()) return null;
+
+            var valuesPaths = optionalPath.Split('/')
+                .Where(x => x.StartsWith("{"))
+                .ToDictionary(CleanParamId, x => (object)subMatch.Groups[i++].Value);
+
+            var nullPaths = pathParts
+                .Where(x => x.StartsWith("{"))
+                .Select(CleanParamId);
+
+            foreach (var nullKey in nullPaths)
+            {
+                if (!valuesPaths.ContainsKey(nullKey))
+                    valuesPaths.Add(nullKey, null);
+            }
+
+            return valuesPaths;
         }
 
         /// <summary>
@@ -289,10 +317,27 @@
         /// <returns>
         /// Parses the JSON as a given type from the request body.
         /// </returns>
+        [Obsolete("Please use the async method.")]
         public static T ParseJson<T>(this IHttpContext context)
             where T : class
         {
             var requestBody = context.RequestBody();
+            return requestBody == null ? null : Json.Deserialize<T>(requestBody);
+        }
+
+        /// <summary>
+        /// Parses the JSON as a given type from the request body.
+        /// Please note the underlying input stream is not rewindable.
+        /// </summary>
+        /// <typeparam name="T">The type of specified object type.</typeparam>
+        /// <param name="context">The context.</param>
+        /// <returns>
+        /// A task with the JSON as a given type from the request body.
+        /// </returns>
+        public static async Task<T> ParseJsonAsync<T>(this IHttpContext context)
+            where T : class
+        {
+            var requestBody = await context.RequestBodyAsync().ConfigureAwait(false);
             return requestBody == null ? null : Json.Deserialize<T>(requestBody);
         }
 
@@ -303,10 +348,10 @@
         /// <param name="length">The length.</param>
         /// <returns><c>true</c> if a request can be gzipped; otherwise, <c>false</c>.</returns>
         public static bool AcceptGzip(this IHttpContext context, long length) =>
-            context.RequestHeader(Headers.AcceptEncoding).Contains(Headers.CompressionGzip)
-            && length < Modules.FileModuleBase.MaxGzipInputLength &&
-            context.Response.ContentType?.StartsWith("audio") == false &&
-            context.Response.ContentType?.StartsWith("video") == false;
+            context.RequestHeader(Headers.AcceptEncoding).Contains(Headers.CompressionGzip) &&
+            length < Modules.FileModuleBase.MaxGzipInputLength &&
+            context.Response.ContentType?.StartsWith("audio") != true &&
+            context.Response.ContentType?.StartsWith("video") != true;
 
         #endregion
 
@@ -326,8 +371,18 @@
         /// </summary>
         /// <param name="context">The context to request body as string.</param>
         /// <returns>A collection that represents KVPs from request data.</returns>
+        [Obsolete("Please use the async method.")]
         public static Dictionary<string, object> RequestFormDataDictionary(this IHttpContext context)
             => RequestFormDataDictionary(context.RequestBody());
+
+        /// <summary>
+        /// Returns dictionary from Request POST data
+        /// Please note the underlying input stream is not rewindable.
+        /// </summary>
+        /// <param name="context">The context to request body as string.</param>
+        /// <returns>A task with a collection that represents KVPs from request data.</returns>
+        public static async Task<Dictionary<string, object>> RequestFormDataDictionaryAsync(this IHttpContext context)
+            => RequestFormDataDictionary(await context.RequestBodyAsync().ConfigureAwait(false));
 
         #endregion
 
